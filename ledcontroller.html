@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no"><meta name="theme-color" content="#10131b"><title>ESP32 LED Studio</title>
+<style>
+:root{color-scheme:dark;--bg:#10131b;--panel:#191f2b;--line:#30394a;--text:#f3f5fa;--muted:#9aa5b8;--blue:#315b9e}
+*{box-sizing:border-box}body{margin:0;padding:18px 14px 36px;background:radial-gradient(ellipse at top,#202b40,#10131b 55%);font-family:system-ui,sans-serif;color:var(--text)}main{max-width:650px;margin:auto}
+.top{display:flex;justify-content:space-between;align-items:center;gap:10px}h1{font-size:24px;margin:0}.sub,.small{color:var(--muted);font-size:12px}
+button{border:1px solid var(--line);background:#252e3e;color:var(--text);border-radius:13px;padding:12px;font-size:13px;font-weight:700;cursor:pointer}button:active{transform:scale(.98)}button.primary{background:var(--blue)}button:disabled{opacity:.4}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:17px;padding:15px;margin:13px 0}.card h2{font-size:15px;margin:0 0 12px}
+.row{display:flex;align-items:center;justify-content:space-between;gap:12px}.status{font-size:12px;color:var(--muted);margin-top:6px}.dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:#bd9144;margin-right:6px}.dot.on{background:#48d597}
+#preview{height:13px;border-radius:20px;margin-top:13px;background:red;box-shadow:0 0 20px #f004}
+#picker{width:100%;height:210px;display:block;border-radius:12px;touch-action:none}
+.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}.swatch{height:55px;display:flex;align-items:end;justify-content:center;text-shadow:0 1px 4px #000;padding:7px;border:2px solid #ffffff25}
+.effects{display:grid;grid-template-columns:repeat(2,1fr);gap:8px}.active{outline:2px solid #8bb9ff;background:#29466d}
+.actions{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:12px}
+.labelrow{display:flex;justify-content:space-between;font-size:13px;margin:12px 0 3px}.value{font-size:12px;color:var(--muted)}input[type=range]{width:100%;accent-color:#83b2ff}
+#log{font:11px ui-monospace,monospace;color:#aab7ca;white-space:pre-wrap;max-height:80px;overflow:auto}
+@media(min-width:560px){.grid{grid-template-columns:repeat(6,1fr)}.effects{grid-template-columns:repeat(4,1fr)}}
+</style></head><body><main>
+<div class="top"><div><h1>LED Studio</h1><div class="sub">ESP32-C3 Bluetooth lighting controller</div></div><button class="primary" id="connect">CONNECT</button></div>
+<div class="card"><div class="row"><div><b>Connection</b><div class="status"><span class="dot" id="dot"></span><span id="status">Not connected</span></div></div><button id="power" disabled>LIGHTS ON</button></div><div id="preview"></div></div>
+<div class="card"><h2>Two-axis colour picker</h2><canvas id="picker" width="600" height="300"></canvas><div class="labelrow"><span>Selected colour</span><span class="value" id="hex">#FF0000</span></div>
+<div class="actions"><button data-rgb="255,0,0">RED</button><button data-rgb="0,255,0">GREEN</button><button data-rgb="0,0,255">BLUE</button><button data-rgb="255,255,255">WHITE</button><button data-rgb="255,90,0">ORANGE</button><button data-rgb="180,0,255">PURPLE</button></div></div>
+<div class="card"><h2>Presets</h2><div class="grid">
+<button class="swatch" data-preset="sunset" style="background:linear-gradient(135deg,#f20,#ffb000)">SUNSET</button><button class="swatch" data-preset="ocean" style="background:linear-gradient(135deg,#001e91,#00d9ff)">OCEAN</button><button class="swatch" data-preset="ice" style="background:linear-gradient(135deg,#a2eaff,#fff)">ICE</button><button class="swatch" data-preset="forest" style="background:linear-gradient(135deg,#003b20,#6bdb42)">FOREST</button><button class="swatch" data-preset="neon" style="background:linear-gradient(135deg,#ff168d,#a000ff)">NEON</button><button class="swatch" data-preset="gold" style="background:linear-gradient(135deg,#ff7900,#ffe08a)">GOLD</button>
+</div></div>
+<div class="card"><h2>Effects</h2><div class="effects">
+<button class="active" data-mode="SOLID">SOLID</button><button data-mode="FADE">COLOUR FADE</button><button data-mode="BREATH">BREATHING</button><button data-mode="STROBE">STROBE</button><button data-mode="FLASH">FLASH</button><button data-mode="RAINBOW">RAINBOW</button><button data-mode="WIPE">CHASER</button></div>
+<div class="labelrow"><span>Effect speed</span><span class="value" id="speedVal">50%</span></div><input id="speed" type="range" min="1" max="100" value="50">
+<div class="small">Flashing effects may trigger discomfort or seizures in photosensitive people. Use cautiously.</div></div>
+<div class="card"><h2>Brightness</h2><div class="labelrow"><span>LED brightness</span><span class="value" id="brightVal">70%</span></div><input id="brightness" type="range" min="0" max="100" value="70"></div>
+<div class="card"><h2>Controller messages</h2><div id="log">Waiting for ESP32…</div></div>
+</main>
+<script>
+const SERVICE='12345678-1234-1234-1234-123456789000',RX='12345678-1234-1234-1234-123456789001',TX='12345678-1234-1234-1234-123456789002';
+let device,rxChar,txChar,connected=false,lightsOn=true,rgb=[255,0,0],timer;
+const el=id=>document.getElementById(id);
+function log(s){el('log').textContent=(s+'\\n'+el('log').textContent).slice(0,900)}
+function status(s,on){el('status').textContent=s;el('dot').classList.toggle('on',on);el('power').disabled=!on}
+async function send(s){if(!connected||!rxChar)return;try{await rxChar.writeValue(new TextEncoder().encode(s))}catch(e){log('Send error: '+e.message)}}
+function colour(r,g,b,tx=true){rgb=[r,g,b].map(v=>Math.max(0,Math.min(255,Math.round(v))));let hex='#'+rgb.map(v=>v.toString(16).padStart(2,'0')).join('').toUpperCase();el('hex').textContent=hex;el('preview').style.background=hex;el('preview').style.boxShadow=`0 0 20px ${hex}66`;if(tx){clearTimeout(timer);timer=setTimeout(()=>send('C:'+rgb.join(',')),35)}}
+function draw(){let c=el('picker'),x=c.getContext('2d'),w=c.width,h=c.height,g=x.createLinearGradient(0,0,w,0);for(let i=0;i<=6;i++)g.addColorStop(i/6,`hsl(${i*60},100%,50%)`);x.fillStyle=g;x.fillRect(0,0,w,h);let a=x.createLinearGradient(0,0,0,h);a.addColorStop(0,'rgba(255,255,255,1)');a.addColorStop(1,'rgba(255,255,255,0)');x.fillStyle=a;x.fillRect(0,0,w,h);let b=x.createLinearGradient(0,0,0,h);b.addColorStop(0,'rgba(0,0,0,0)');b.addColorStop(1,'rgba(0,0,0,1)');x.fillStyle=b;x.fillRect(0,0,w,h)}
+function pick(e){let r=el('picker').getBoundingClientRect(),hue=Math.max(0,Math.min(1,(e.clientX-r.left)/r.width))*360,y=Math.max(0,Math.min(1,(e.clientY-r.top)/r.height)),s=1-y*.85,v=1-y*.15,c=v*s,x=c*(1-Math.abs((hue/60)%2-1)),m=v-c,R=0,G=0,B=0;if(hue<60){R=c;G=x}else if(hue<120){R=x;G=c}else if(hue<180){G=c;B=x}else if(hue<240){G=x;B=c}else if(hue<300){R=x;B=c}else{R=c;B=x}colour((R+m)*255,(G+m)*255,(B+m)*255)}
+el('picker').addEventListener('pointerdown',e=>{el('picker').setPointerCapture(e.pointerId);pick(e)});el('picker').addEventListener('pointermove',e=>{if(e.buttons)pick(e)});
+el('connect').onclick=async()=>{if(!navigator.bluetooth){alert('Open this HTTPS page in Chrome on Android. Web Bluetooth is not supported by every browser.');return}try{device=await navigator.bluetooth.requestDevice({filters:[{services:[SERVICE]}]});device.addEventListener('gattserverdisconnected',()=>{connected=false;rxChar=null;status('Disconnected',false);el('connect').textContent='CONNECT';log('Disconnected')});let server=await device.gatt.connect(),service=await server.getPrimaryService(SERVICE);rxChar=await service.getCharacteristic(RX);txChar=await service.getCharacteristic(TX);await txChar.startNotifications();txChar.addEventListener('characteristicvaluechanged',e=>log(new TextDecoder().decode(e.target.value)));connected=true;status('Connected to '+device.name,true);el('connect').textContent='CONNECTED';log('Connected to '+device.name);send('PING')}catch(e){log('Connection error: '+e.message);status('Not connected',false)}};
+el('power').onclick=()=>{lightsOn=!lightsOn;send(lightsOn?'ON':'OFF');el('power').textContent=lightsOn?'LIGHTS ON':'LIGHTS OFF'};
+document.querySelectorAll('[data-rgb]').forEach(b=>b.onclick=()=>{colour(...b.dataset.rgb.split(',').map(Number));mode('SOLID')});
+const presets={sunset:[255,48,5],ocean:[0,90,255],ice:[160,225,255],forest:[15,180,45],neon:[255,0,145],gold:[255,145,20]};
+document.querySelectorAll('[data-preset]').forEach(b=>b.onclick=()=>{colour(...presets[b.dataset.preset]);mode('SOLID')});
+function mode(m){document.querySelectorAll('[data-mode]').forEach(b=>b.classList.toggle('active',b.dataset.mode===m));send('M:'+m)}
+document.querySelectorAll('[data-mode]').forEach(b=>b.onclick=()=>mode(b.dataset.mode));
+el('brightness').oninput=e=>{el('brightVal').textContent=e.target.value+'%';send('B:'+Math.round(+e.target.value*2.55))};
+el('speed').oninput=e=>{el('speedVal').textContent=e.target.value+'%';send('S:'+e.target.value)};
+draw();colour(255,0,0,false);
+</script></body></html>
