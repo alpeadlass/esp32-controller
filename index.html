@@ -1,0 +1,214 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no"><meta name="theme-color" content="#10131b"><title>ESP32 LED Studio</title>
+<style>
+:root{color-scheme:dark;--bg:#10131b;--panel:#191f2b;--line:#30394a;--text:#f3f5fa;--muted:#9aa5b8;--blue:#315b9e}
+*{box-sizing:border-box}body{margin:0;padding:18px 14px 36px;background:radial-gradient(ellipse at top,#202b40,#10131b 55%);font-family:system-ui,sans-serif;color:var(--text)}main{max-width:650px;margin:auto}
+.top{display:flex;justify-content:space-between;align-items:center;gap:10px}h1{font-size:24px;margin:0}.sub,.small{color:var(--muted);font-size:12px}
+button{border:1px solid var(--line);background:#252e3e;color:var(--text);border-radius:13px;padding:12px;font-size:13px;font-weight:700;cursor:pointer}button:active{transform:scale(.98)}button.primary{background:var(--blue)}button:disabled{opacity:.4}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:17px;padding:15px;margin:13px 0}.card h2{font-size:15px;margin:0 0 12px}
+.row{display:flex;align-items:center;justify-content:space-between;gap:12px}.status{font-size:12px;color:var(--muted);margin-top:6px}.dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:#bd9144;margin-right:6px}.dot.on{background:#48d597}
+#preview{height:13px;border-radius:20px;margin-top:13px;background:red;box-shadow:0 0 20px #f004}
+#picker{width:100%;height:210px;display:block;border-radius:12px;touch-action:none}
+.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}.swatch{height:55px;display:flex;align-items:end;justify-content:center;text-shadow:0 1px 4px #000;padding:7px;border:2px solid #ffffff25}
+.effects{display:grid;grid-template-columns:repeat(2,1fr);gap:8px}.active{outline:2px solid #8bb9ff;background:#29466d}
+.actions{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:12px}
+.labelrow{display:flex;justify-content:space-between;font-size:13px;margin:12px 0 3px}.value{font-size:12px;color:var(--muted)}input[type=range]{width:100%;accent-color:#83b2ff}
+#log{font:11px ui-monospace,monospace;color:#aab7ca;white-space:pre-wrap;max-height:80px;overflow:auto}
+@media(min-width:560px){.grid{grid-template-columns:repeat(6,1fr)}.effects{grid-template-columns:repeat(4,1fr)}}
+</style></head><body><main>
+<div class="top"><div><h1>LED Studio</h1><div class="sub">ESP32-C3 Bluetooth lighting controller &middot; <b style="color:#83b2ff">page v2 (police on ESP32)</b></div></div><button class="primary" id="connect">CONNECT</button></div>
+<div class="card"><div class="row"><div><b>Connection</b><div class="status"><span class="dot" id="dot"></span><span id="status">Not connected</span></div></div><button id="power" disabled>LIGHTS ON</button></div><div id="preview"></div></div>
+<div class="card"><h2>Two-axis colour picker</h2><canvas id="picker" width="600" height="300"></canvas><div class="labelrow"><span>Selected colour</span><span class="value" id="hex">#FF0000</span></div>
+<div class="actions"><button data-rgb="255,0,0">RED</button><button data-rgb="0,255,0">GREEN</button><button data-rgb="0,0,255">BLUE</button><button data-rgb="255,255,255">WHITE</button><button data-rgb="255,90,0">ORANGE</button><button data-rgb="180,0,255">PURPLE</button></div></div>
+<div class="card"><h2>Presets</h2><div class="grid">
+<button class="swatch" data-preset="sunset" style="background:linear-gradient(135deg,#f20,#ffb000)">SUNSET</button><button class="swatch" data-preset="ocean" style="background:linear-gradient(135deg,#001e91,#00d9ff)">OCEAN</button><button class="swatch" data-preset="ice" style="background:linear-gradient(135deg,#a2eaff,#fff)">ICE</button><button class="swatch" data-preset="forest" style="background:linear-gradient(135deg,#003b20,#6bdb42)">FOREST</button><button class="swatch" data-preset="neon" style="background:linear-gradient(135deg,#ff168d,#a000ff)">NEON</button><button class="swatch" data-preset="gold" style="background:linear-gradient(135deg,#ff7900,#ffe08a)">GOLD</button>
+</div></div>
+<div class="card"><h2>Effects</h2><div class="effects">
+<button class="active" data-mode="SOLID">SOLID</button><button data-mode="FADE">COLOUR FADE</button><button data-mode="BREATH">BREATHING</button><button data-mode="STROBE">STROBE</button><button data-mode="FLASH">FLASH</button><button data-mode="RAINBOW">RAINBOW</button><button data-mode="WIPE">CHASER</button></div>
+<div class="labelrow"><span>Effect speed</span><span class="value" id="speedVal">50%</span></div><input id="speed" type="range" min="1" max="100" value="50">
+<div class="small">Flashing effects may trigger discomfort or seizures in photosensitive people. Use cautiously.</div></div>
+
+<div class="card" id="serviceCard"><h2>Service flash patterns</h2>
+<p class="small">Decorative lighting sequences. Not for use on public-road vehicles.</p>
+<div class="effects">
+<button data-service="POLICE">RED / BLUE</button>
+<button data-service="RB2">RED / BLUE 3x</button>
+<button data-service="RB3">RED / BLUE x2</button>
+<button data-service="MAGENTA">MAGENTA</button>
+<button data-service="AMBER">ORANGE / AMBER</button>
+</div>
+<button id="serviceStop" style="width:100%;margin-top:9px">STOP PATTERN</button>
+</div>
+<div class="card"><h2>Brightness</h2><div class="labelrow"><span>LED brightness</span><span class="value" id="brightVal">70%</span></div><input id="brightness" type="range" min="0" max="100" value="70"></div>
+
+<div class="card" id="musicCard"><div class="row"><h2 style="margin:0">Music reactive</h2><span class="value" id="micState">MIC OFF</span></div>
+<p class="small">Uses your phone microphone. Keep this page open while music plays.</p>
+<div class="effects" style="margin-top:12px">
+<button id="micStart" class="primary">START LISTENING</button><button id="micStop" disabled>STOP</button>
+</div>
+<div class="labelrow"><span>Reaction style</span></div>
+<div class="effects">
+<button class="active" data-audio="IMPACT">BASS IMPACT</button>
+<button data-audio="VOLUME">SMOOTH VOLUME</button>
+<button data-audio="PITCH">PITCH COLOUR</button>
+<button data-audio="BEAT">BEAT FLASH</button>
+<button data-audio="BASS">BASS PULSE</button>
+<button data-audio="SPECTRUM">COLOUR SPECTRUM</button>
+</div>
+<div class="labelrow"><span>Microphone sensitivity</span><span class="value" id="sensVal">150%</span></div><input id="sensitivity" type="range" min="50" max="400" value="150">
+<div class="labelrow"><span>Bass hit threshold</span><span class="value" id="thresholdVal">55%</span></div><input id="threshold" type="range" min="15" max="90" value="55">
+<div class="labelrow"><span>Flash duration</span><span class="value" id="flashVal">110 ms</span></div><input id="flashDuration" type="range" min="50" max="350" step="10" value="110">
+<div class="labelrow"><span>Minimum brightness</span><span class="value" id="minVal">8%</span></div><input id="minBright" type="range" min="0" max="60" value="8">
+<div class="labelrow"><span>Maximum brightness</span><span class="value" id="maxVal">100%</span></div><input id="maxBright" type="range" min="10" max="100" value="100">
+<div class="labelrow"><span>Audio level</span><span class="value" id="audioVal">0%</span></div>
+<div style="height:12px;background:#0c1018;border-radius:20px;overflow:hidden"><div id="audioBar" style="height:100%;width:0%;background:linear-gradient(90deg,#2876ff,#3de0b4);transition:width .08s"></div></div>
+<div class="small" style="margin-top:10px">Microphone audio is analysed locally in your phone's browser. It is not sent to a server. Use a lower maximum brightness if the LEDs are too intense.</div>
+</div>
+<div class="card"><h2>Controller messages</h2><div id="log">Waiting for ESP32…</div></div>
+</main>
+<script>
+const SERVICE='12345678-1234-1234-1234-123456789000',RX='12345678-1234-1234-1234-123456789001',TX='12345678-1234-1234-1234-123456789002';
+let device,rxChar,txChar,connected=false,lightsOn=true,rgb=[255,0,0],timer;
+let audioCtx=null, micStream=null, analyser=null, audioData=null, audioRAF=0, audioMode='IMPACT', lastAudioSend=0, smoothed=0, bassEnvelope=0, flashUntil=0, lastHit=0, previousSpectrum=null, fluxMean=.01, fluxDev=.01, noiseFloor=.02;
+let serviceTimer=null, serviceIndex=0, serviceName='';
+const el=id=>document.getElementById(id);
+function log(s){el('log').textContent=(s+'\n'+el('log').textContent).slice(0,900)}
+function status(s,on){el('status').textContent=s;el('dot').classList.toggle('on',on);el('power').disabled=!on}
+let writeBusy=false, writeGeneration=0, urgentQueue=[], latestState=new Map();
+function clearWrites(){writeGeneration++;urgentQueue=[];latestState.clear();writeBusy=false;}
+function send(s){
+  if(!connected||!rxChar)return;
+  const key=s.split(':',1)[0];
+  if(['A','C','B','S'].includes(key)) latestState.set(key,s); else urgentQueue.push(s);
+  flushWrites();
+}
+async function flushWrites(){
+  if(writeBusy||!connected||!rxChar)return;
+  writeBusy=true; const generation=writeGeneration;
+  try{
+    while(connected&&rxChar&&generation===writeGeneration){
+      let msg=urgentQueue.shift();
+      if(!msg&&latestState.size){const key=latestState.keys().next().value;msg=latestState.get(key);latestState.delete(key);}
+      if(!msg)break;
+      log('> '+msg);await rxChar.writeValueWithoutResponse(new TextEncoder().encode(msg));
+      await new Promise(r=>setTimeout(r,30));
+    }
+  }catch(e){
+    log('BLE stopped: '+e.message); connected=false; rxChar=null; clearWrites();
+    stopService(); if(micStream)stopListening(); status('Disconnected',false); el('connect').textContent='RECONNECT';
+  }finally{
+    if(generation===writeGeneration)writeBusy=false;
+    if(connected&&(urgentQueue.length||latestState.size))setTimeout(flushWrites,0);
+  }
+}
+function colour(r,g,b,tx=true){rgb=[r,g,b].map(v=>Math.max(0,Math.min(255,Math.round(v))));let hex='#'+rgb.map(v=>v.toString(16).padStart(2,'0')).join('').toUpperCase();el('hex').textContent=hex;el('preview').style.background=hex;el('preview').style.boxShadow=`0 0 20px ${hex}66`;if(tx){clearTimeout(timer);timer=setTimeout(()=>send('C:'+rgb.join(',')),35)}}
+function draw(){let c=el('picker'),x=c.getContext('2d'),w=c.width,h=c.height,g=x.createLinearGradient(0,0,w,0);for(let i=0;i<=6;i++)g.addColorStop(i/6,`hsl(${i*60},100%,50%)`);x.fillStyle=g;x.fillRect(0,0,w,h);let a=x.createLinearGradient(0,0,0,h);a.addColorStop(0,'rgba(255,255,255,1)');a.addColorStop(1,'rgba(255,255,255,0)');x.fillStyle=a;x.fillRect(0,0,w,h);let b=x.createLinearGradient(0,0,0,h);b.addColorStop(0,'rgba(0,0,0,0)');b.addColorStop(1,'rgba(0,0,0,1)');x.fillStyle=b;x.fillRect(0,0,w,h)}
+function pick(e){let r=el('picker').getBoundingClientRect(),hue=Math.max(0,Math.min(1,(e.clientX-r.left)/r.width))*360,y=Math.max(0,Math.min(1,(e.clientY-r.top)/r.height)),s=1-y*.85,v=1-y*.15,c=v*s,x=c*(1-Math.abs((hue/60)%2-1)),m=v-c,R=0,G=0,B=0;if(hue<60){R=c;G=x}else if(hue<120){R=x;G=c}else if(hue<180){G=c;B=x}else if(hue<240){G=x;B=c}else if(hue<300){R=x;B=c}else{R=c;B=x}colour((R+m)*255,(G+m)*255,(B+m)*255)}
+el('picker').addEventListener('pointerdown',e=>{el('picker').setPointerCapture(e.pointerId);pick(e)});el('picker').addEventListener('pointermove',e=>{if(e.buttons)pick(e)});
+el('connect').onclick=async()=>{if(!navigator.bluetooth){alert('Open this HTTPS page in Chrome on Android. Web Bluetooth is not supported by every browser.');return}try{device=await navigator.bluetooth.requestDevice({filters:[{services:[SERVICE]}]});device.addEventListener('gattserverdisconnected',()=>{connected=false;rxChar=null;clearWrites();stopService();if(micStream)stopListening();status('Disconnected',false);el('connect').textContent='RECONNECT';log('Disconnected');});let server=await device.gatt.connect(),service=await server.getPrimaryService(SERVICE);rxChar=await service.getCharacteristic(RX);txChar=await service.getCharacteristic(TX);await txChar.startNotifications();txChar.addEventListener('characteristicvaluechanged',e=>log(new TextDecoder().decode(e.target.value)));clearWrites();connected=true;status('Connected to '+device.name,true);el('connect').textContent='CONNECTED';log('Connected to '+device.name);send('PING');send(lightsOn?'ON':'OFF')}catch(e){log('Connection error: '+e.message);status('Not connected',false)}};
+el('power').onclick=()=>{lightsOn=!lightsOn;send(lightsOn?'ON':'OFF');el('power').textContent=lightsOn?'LIGHTS ON':'LIGHTS OFF'};
+document.querySelectorAll('[data-rgb]').forEach(b=>b.onclick=()=>{colour(...b.dataset.rgb.split(',').map(Number))});
+const presets={sunset:[255,48,5],ocean:[0,90,255],ice:[160,225,255],forest:[15,180,45],neon:[255,0,145],gold:[255,145,20]};
+document.querySelectorAll('[data-preset]').forEach(b=>b.onclick=()=>{colour(...presets[b.dataset.preset])});
+function mode(m){document.querySelectorAll('[data-service]').forEach(b=>b.classList.remove('active'));document.querySelectorAll('[data-mode]').forEach(b=>b.classList.toggle('active',b.dataset.mode===m));send('M:'+m)}
+document.querySelectorAll('[data-mode]').forEach(b=>b.onclick=()=>mode(b.dataset.mode));
+el('brightness').oninput=e=>{el('brightVal').textContent=e.target.value+'%';send('B:'+Math.round(+e.target.value*2.55))};
+el('speed').oninput=e=>{el('speedVal').textContent=e.target.value+'%';send('S:'+e.target.value)};
+
+
+// Service-style patterns now run entirely on the ESP32 (one command, exact timing).
+function stopService(){
+  serviceName=''; document.querySelectorAll('[data-service]').forEach(b=>b.classList.remove('active'));
+}
+function runService(name){
+  if(!connected){alert('Connect to the ESP32 first.');return;}
+  stopListeningIfActive(); stopService();
+  serviceName=name;
+  document.querySelectorAll('[data-mode]').forEach(b=>b.classList.remove('active'));
+  document.querySelectorAll('[data-service]').forEach(b=>b.classList.toggle('active',b.dataset.service===name));
+  send('M:'+name);
+  log('Pattern: '+name);
+}
+document.querySelectorAll('[data-service]').forEach(b=>b.onclick=()=>runService(b.dataset.service));
+el('serviceStop').onclick=()=>{stopService();mode('SOLID');log('Pattern stopped');};
+
+function stopListeningIfActive(){if(micStream)stopListening();}
+
+// Phone-microphone music reactive control. Audio stays in this browser.
+document.querySelectorAll('[data-audio]').forEach(b=>b.onclick=()=>{
+  audioMode=b.dataset.audio;
+  document.querySelectorAll('[data-audio]').forEach(x=>x.classList.toggle('active',x===b));
+});
+el('sensitivity').oninput=e=>el('sensVal').textContent=e.target.value+'%';
+el('threshold').oninput=e=>el('thresholdVal').textContent=e.target.value+'%';
+el('flashDuration').oninput=e=>el('flashVal').textContent=e.target.value+' ms';
+el('minBright').oninput=e=>el('minVal').textContent=e.target.value+'%';
+el('maxBright').oninput=e=>el('maxVal').textContent=e.target.value+'%';
+
+function stopListening(){
+  if(audioRAF) cancelAnimationFrame(audioRAF);
+  audioRAF=0;
+  if(micStream) micStream.getTracks().forEach(t=>t.stop());
+  micStream=null; analyser=null; audioData=null; previousSpectrum=null;
+  if(audioCtx){audioCtx.close().catch(()=>{});audioCtx=null;}
+  el('micState').textContent='MIC OFF';
+  el('micStart').disabled=false; el('micStop').disabled=true;
+  el('audioBar').style.width='0%'; el('audioVal').textContent='0%';
+  send('M:SOLID'); send('B:'+Math.round(+el('brightness').value*2.55));
+  log('Microphone stopped');
+}
+el('micStop').onclick=stopListening;
+el('micStart').onclick=async()=>{
+  if(!connected){alert('Connect to the ESP32 first.');return;}
+  if(!navigator.mediaDevices?.getUserMedia){alert('Microphone access is unavailable. Open the HTTPS page in a supported browser, such as Chrome on Android.');return;}
+  try{
+    micStream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:false,noiseSuppression:false,autoGainControl:false}});
+    audioCtx=new (window.AudioContext||window.webkitAudioContext)();
+    await audioCtx.resume();
+    const source=audioCtx.createMediaStreamSource(micStream);
+    analyser=audioCtx.createAnalyser(); analyser.fftSize=2048; analyser.smoothingTimeConstant=0.35;
+    source.connect(analyser); audioData=new Uint8Array(analyser.frequencyBinCount); previousSpectrum=new Float32Array(analyser.frequencyBinCount); fluxMean=.01;fluxDev=.01;noiseFloor=.02;
+    el('micState').textContent='LISTENING'; el('micStart').disabled=true; el('micStop').disabled=false;
+    mode('SOLID'); log('Microphone listening');
+    audioLoop();
+  }catch(e){stopListening();log('Microphone error: '+e.message);alert('Could not access microphone: '+e.message);}
+};
+
+function bandEnergy(data,loHz,hiHz){
+  const hzPerBin=audioCtx.sampleRate/analyser.fftSize;
+  const lo=Math.max(1,Math.floor(loHz/hzPerBin)), hi=Math.min(data.length-1,Math.ceil(hiHz/hzPerBin));
+  let sum=0,n=0; for(let i=lo;i<=hi;i++){sum+=data[i];n++;}
+  return n?sum/n/255:0;
+}
+function audioLoop(){
+  if(!analyser||!audioData)return;
+  analyser.getByteFrequencyData(audioData);
+  const bass=bandEnergy(audioData,45,180), mids=bandEnergy(audioData,180,2000), treble=bandEnergy(audioData,2000,9000), overall=bandEnergy(audioData,45,9000);
+  const sensitivity=+el('sensitivity').value/100, min=+el('minBright').value, max=+el('maxBright').value, threshold=+el('threshold').value/100, now=performance.now();
+  const hz=audioCtx.sampleRate/analyser.fftSize, lo=Math.max(1,Math.floor(45/hz)), hi=Math.min(audioData.length-1,Math.ceil(180/hz));
+  let flux=0,n=0;
+  for(let i=lo;i<=hi;i++){const v=audioData[i]/255,d=Math.max(0,v-previousSpectrum[i]);flux+=d*d;previousSpectrum[i]=v;n++;}
+  flux=n?Math.sqrt(flux/n):0;
+  noiseFloor=overall<noiseFloor*1.7 ? noiseFloor*.98+overall*.02 : noiseFloor*.998+overall*.002;
+  const oldMean=fluxMean; fluxMean=fluxMean*.94+flux*.06; fluxDev=fluxDev*.94+Math.abs(flux-oldMean)*.06;
+  const hit=flux>fluxMean+(1.0+threshold*2.0)*Math.max(.004,fluxDev) && bass>noiseFloor*1.18 && now-lastHit>180;
+  if(hit){lastHit=now;flashUntil=now+ +el('flashDuration').value;}
+  const clean=Math.max(0,overall-noiseFloor*.85), cleanBass=Math.max(0,bass-noiseFloor*.72);
+  bassEnvelope=Math.max(Math.min(1,cleanBass*sensitivity*3.5),bassEnvelope*.80); smoothed=smoothed*.86+clean*.14;
+  let outBrightness=min+(max-min)*Math.min(1,smoothed*sensitivity*2.4), outRGB=rgb.slice();
+  if(audioMode==='IMPACT')outBrightness=now<flashUntil?max:min;
+  else if(audioMode==='BASS')outBrightness=min+(max-min)*bassEnvelope;
+  else if(audioMode==='VOLUME')outBrightness=min+(max-min)*Math.min(1,smoothed*sensitivity*2.2);
+  else if(audioMode==='PITCH'){
+    let peak=lo,pv=0;for(let i=Math.floor(100/hz);i<Math.min(audioData.length,Math.ceil(5000/hz));i++)if(audioData[i]>pv){pv=audioData[i];peak=i;}
+    const hue=Math.max(0,Math.min(359,Math.round(Math.log((peak*hz)/100)/Math.log(50)*359))),c=.9,x=c*(1-Math.abs((hue/60)%2-1));let rr=0,gg=0,bb=0;
+    if(hue<60){rr=c;gg=x}else if(hue<120){rr=x;gg=c}else if(hue<180){gg=c;bb=x}else if(hue<240){gg=x;bb=c}else if(hue<300){rr=x;bb=c}else{rr=c;bb=x}outRGB=[rr,gg,bb].map(v=>Math.round(v*255));
+  }else if(audioMode==='SPECTRUM')outRGB=[bass,mids,treble].map(v=>Math.min(255,Math.round(v*sensitivity*520)));
+  else if(audioMode==='BEAT')outBrightness=now<flashUntil?max:min;
+  const display=Math.round(Math.min(1,clean*sensitivity*3)*100);el('audioBar').style.width=display+'%';el('audioVal').textContent=display+'%';
+  // One atomic packet, max 6.7 times/sec, greatly reducing BLE load.
+  if(now-lastAudioSend>150&&connected){lastAudioSend=now;send('A:'+outRGB.join(',')+','+Math.round(Math.max(0,Math.min(100,outBrightness))*2.55));}
+  audioRAF=requestAnimationFrame(audioLoop);
+}
+draw();colour(255,0,0,false);
+</script></body></html>
