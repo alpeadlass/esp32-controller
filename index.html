@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no"><meta name="theme-color" content="#10131b"><title>Head Tracker</title>
+<style>
+:root{color-scheme:dark;--bg:#10131b;--panel:#191f2b;--line:#30394a;--text:#f3f5fa;--muted:#9aa5b8;--blue:#315b9e;--ok:#48d597}
+*{box-sizing:border-box}body{margin:0;padding:18px 14px 36px;background:radial-gradient(ellipse at top,#202b40,#10131b 55%);font-family:system-ui,sans-serif;color:var(--text)}main{max-width:650px;margin:auto}
+.top{display:flex;justify-content:space-between;align-items:center;gap:10px}h1{font-size:24px;margin:0}.sub,.small{color:var(--muted);font-size:12px}
+button{border:1px solid var(--line);background:#252e3e;color:var(--text);border-radius:13px;padding:12px;font-size:13px;font-weight:700;cursor:pointer}button:active{transform:scale(.98)}button.primary{background:var(--blue)}button:disabled{opacity:.4}
+button:focus-visible,input:focus-visible{outline:2px solid #8bb9ff}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:17px;padding:15px;margin:13px 0}.card h2{font-size:15px;margin:0 0 12px}
+.row{display:flex;align-items:center;justify-content:space-between;gap:12px}.status{font-size:12px;color:var(--muted);margin-top:6px}.dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:#bd9144;margin-right:6px}.dot.on{background:var(--ok)}
+#dial{width:100%;max-width:320px;display:block;margin:0 auto}
+.big{text-align:center;font-size:40px;font-weight:800;margin-top:4px;font-variant-numeric:tabular-nums}.big small{font-size:13px;color:var(--muted);font-weight:600;display:block}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:10px}.two canvas{width:100%;display:block}.cap{text-align:center;font-size:13px;margin-top:4px;font-variant-numeric:tabular-nums}
+.actions{display:grid;grid-template-columns:1fr 1fr;gap:8px}#recenter{grid-column:1/3;padding:20px;font-size:17px}
+.opts{display:flex;flex-wrap:wrap;gap:14px;font-size:13px;margin-top:12px}.opts label{display:flex;align-items:center;gap:6px}
+.gs{display:flex;gap:8px;margin-top:12px;align-items:center;font-size:13px}.gs input{width:90px;background:#252e3e;color:var(--text);border:1px solid var(--line);border-radius:10px;padding:9px;font-size:13px}
+.servo{display:flex;justify-content:space-around;font-size:13px;text-align:center;font-variant-numeric:tabular-nums}.servo b{display:block;font-size:22px}
+#log{font:11px ui-monospace,monospace;color:#aab7ca;white-space:pre-wrap;max-height:80px;overflow:auto}
+</style></head><body><main>
+<div class="top"><div><h1>Head Tracker</h1><div class="sub">ESP32-C3 motion sensor over Bluetooth</div></div><button class="primary" id="connect">CONNECT</button></div>
+
+<div class="card"><div class="row"><div><b>Connection</b><div class="status"><span class="dot" id="dot"></span><span id="status">Not connected</span></div></div><div class="small" id="rate">0 Hz</div></div></div>
+
+<div class="card"><h2>Heading</h2>
+<canvas id="dial" width="640" height="640"></canvas>
+<div class="big"><span id="yawv">0</span>°<small>left / right (0 = straight ahead)</small></div></div>
+
+<div class="card"><h2>Tilt</h2><div class="two">
+<div><canvas id="side" width="320" height="320"></canvas><div class="cap">Pitch <b id="pitchv">0</b>°</div></div>
+<div><canvas id="front" width="320" height="320"></canvas><div class="cap">Roll <b id="rollv">0</b>°</div></div></div></div>
+
+<div class="card"><h2>Controls</h2><div class="actions">
+<button class="primary" id="recenter" disabled>RECENTER</button>
+<button id="recal" disabled>RECALIBRATE GYRO</button><button id="reset" disabled>PING</button></div>
+<div class="small" style="margin-top:10px">Recenter while looking straight ahead. Recalibrate with the tracker held still for two seconds. Yaw slowly drifts because there is no compass chip, so recenter now and then.</div>
+<div class="opts"><label><input type="checkbox" id="invYaw"> Flip left/right</label><label><input type="checkbox" id="invPitch"> Flip up/down</label><label><input type="checkbox" id="invRoll"> Flip tilt</label></div>
+<div class="gs"><span>Gyro scale</span><input id="gscale" type="number" step="0.1" value="16.4"><button id="gset" disabled>SET</button><span class="small">counts per °/s</span></div></div>
+
+<div class="card"><h2>Servo preview</h2><div class="servo"><div>Pan<b id="pan">90</b>°</div><div>Tilt<b id="tilt">90</b>°</div></div>
+<div class="small" style="margin-top:8px;text-align:center">What servos would be told: pan ±90° of head turn, tilt ±45° of nod, centred on 90°.</div></div>
+
+<div class="card"><h2>Log</h2><div id="log"></div></div>
+</main>
+<script>
+const SERVICE='12345678-1234-1234-1234-123456789100',RX='12345678-1234-1234-1234-123456789101',TX='12345678-1234-1234-1234-123456789102';
+const el=i=>document.getElementById(i);let device,rxChar,txChar,connected=false,pkts=0;
+const tgt={yaw:0,pitch:0,roll:0},cur={yaw:0,pitch:0,roll:0};
+function log(m){const l=el('log');l.textContent=(m+'\n'+l.textContent).slice(0,900)}
+function status(t,on){el('status').textContent=t;el('dot').classList.toggle('on',on);['recenter','recal','reset','gset'].forEach(i=>el(i).disabled=!on)}
+async function send(s){if(!rxChar)return;try{await rxChar.writeValueWithoutResponse(new TextEncoder().encode(s));log('> '+s)}catch(e){log('Send error: '+e.message)}}
+try{['invYaw','invPitch','invRoll'].forEach(i=>{el(i).checked=localStorage.getItem(i)==='1';el(i).onchange=e=>localStorage.setItem(i,e.target.checked?'1':'0')})}catch(e){}
+const sgn=i=>el(i).checked?-1:1;
+
+el('connect').onclick=async()=>{
+ if(!navigator.bluetooth){alert('Open this HTTPS page in Chrome on Android. Web Bluetooth is not supported by every browser.');return}
+ try{
+  device=await navigator.bluetooth.requestDevice({filters:[{services:[SERVICE]}]});
+  device.addEventListener('gattserverdisconnected',()=>{connected=false;rxChar=null;status('Disconnected',false);el('connect').textContent='RECONNECT';log('Disconnected')});
+  const server=await device.gatt.connect(),svc=await server.getPrimaryService(SERVICE);
+  rxChar=await svc.getCharacteristic(RX);txChar=await svc.getCharacteristic(TX);
+  await txChar.startNotifications();
+  txChar.addEventListener('characteristicvaluechanged',e=>{
+   const t=new TextDecoder().decode(e.target.value);
+   if(t.startsWith('H:')){const p=t.slice(2).split(',').map(Number);if(p.length===3&&p.every(isFinite)){tgt.yaw=p[0]/10;tgt.pitch=p[1]/10;tgt.roll=p[2]/10;pkts++}}
+   else log(t)});
+  connected=true;status('Connected to '+device.name,true);el('connect').textContent='CONNECTED';log('Connected to '+device.name);send('PING');
+ }catch(e){log('Connection error: '+e.message);status('Not connected',false)}
+};
+el('recenter').onclick=()=>send('Z');
+el('recal').onclick=()=>send('R');
+el('reset').onclick=()=>send('PING');
+el('gset').onclick=()=>send('G:'+el('gscale').value);
+document.addEventListener('keydown',e=>{if(e.code==='Space'&&connected){e.preventDefault();send('Z')}});
+setInterval(()=>{el('rate').textContent=pkts+' Hz';pkts=0},1000);
+
+// ---- drawing ----
+const D=Math.PI/180;
+function head(c,r,detail){ // top-down head, nose points up
+ c.fillStyle='#2b3b57';c.strokeStyle='#8bb9ff';c.lineWidth=r*.07;
+ c.beginPath();c.ellipse(0,0,r*.8,r*.95,0,0,7);c.fill();c.stroke();
+ c.beginPath();c.moveTo(-r*.2,-r*.9);c.lineTo(0,-r*1.3);c.lineTo(r*.2,-r*.9);c.closePath();c.fillStyle='#8bb9ff';c.fill();
+ c.fillStyle='#8bb9ff';c.fillRect(-r*.9,-r*.12,r*.14,r*.4);c.fillRect(r*.76,-r*.12,r*.14,r*.4);
+}
+function dial(a){
+ const c=el('dial').getContext('2d'),W=640,R=250;c.clearRect(0,0,W,W);c.save();c.translate(W/2,W/2);
+ c.strokeStyle='#30394a';c.lineWidth=4;c.beginPath();c.arc(0,0,R,0,7);c.stroke();
+ for(let d=0;d<360;d+=10){const m=d%90===0,t=d%30===0,len=m?30:t?20:10;c.save();c.rotate(d*D);c.strokeStyle=m?'#8bb9ff':'#9aa5b8';c.lineWidth=m?4:2;c.beginPath();c.moveTo(0,-R);c.lineTo(0,-R+len);c.stroke();c.restore()}
+ c.fillStyle='#9aa5b8';c.font='bold 26px system-ui';c.textAlign='center';c.textBaseline='middle';
+ [['FWD',0],['R',90],['BACK',180],['L',270]].forEach(([s,d])=>{c.fillText(s,Math.sin(d*D)*(R+36),-Math.cos(d*D)*(R+36))});
+ c.rotate(a*D);
+ c.strokeStyle='#48d597';c.lineWidth=5;c.beginPath();c.moveTo(0,-R+34);c.lineTo(0,-R+90);c.stroke();
+ head(c,110);c.restore();
+}
+function side(p){
+ const c=el('side').getContext('2d');c.clearRect(0,0,320,320);c.save();c.translate(160,160);
+ c.strokeStyle='#30394a';c.lineWidth=2;c.beginPath();c.moveTo(-140,0);c.lineTo(140,0);c.stroke();
+ c.rotate(-p*D);c.fillStyle='#2b3b57';c.strokeStyle='#8bb9ff';c.lineWidth=5;
+ c.beginPath();c.arc(0,0,70,0,7);c.fill();c.stroke();
+ c.fillStyle='#8bb9ff';c.beginPath();c.moveTo(66,-16);c.lineTo(104,6);c.lineTo(66,22);c.closePath();c.fill();c.restore();
+}
+function front(r){
+ const c=el('front').getContext('2d');c.clearRect(0,0,320,320);c.save();c.translate(160,160);
+ c.strokeStyle='#30394a';c.lineWidth=2;c.beginPath();c.moveTo(-140,0);c.lineTo(140,0);c.stroke();
+ c.rotate(r*D);c.fillStyle='#2b3b57';c.strokeStyle='#8bb9ff';c.lineWidth=5;
+ c.beginPath();c.arc(0,0,70,0,7);c.fill();c.stroke();
+ c.fillStyle='#8bb9ff';c.fillRect(-84,-12,12,34);c.fillRect(72,-12,12,34);
+ c.beginPath();c.arc(-24,-14,7,0,7);c.arc(24,-14,7,0,7);c.fill();c.fillRect(-20,28,40,6);c.restore();
+}
+const wrap=d=>((d+540)%360)-180;
+function frame(){
+ const y=sgn('invYaw')*tgt.yaw,p=sgn('invPitch')*tgt.pitch,r=sgn('invRoll')*tgt.roll;
+ cur.yaw+=wrap(y-cur.yaw)*.35;cur.pitch+=(p-cur.pitch)*.35;cur.roll+=(r-cur.roll)*.35;
+ dial(cur.yaw);side(cur.pitch);front(cur.roll);
+ const yw=wrap(y);el('yawv').textContent=Math.round(yw);el('pitchv').textContent=Math.round(p);el('rollv').textContent=Math.round(r);
+ const cl=(v,a,b)=>Math.max(a,Math.min(b,v));
+ el('pan').textContent=Math.round(cl(90+yw,0,180));el('tilt').textContent=Math.round(cl(90+p*2,0,180));
+ requestAnimationFrame(frame);
+}
+frame();
+</script></body></html>
