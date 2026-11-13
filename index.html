@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<meta name="theme-color" content="#171a20">
+<title>Forklift BLE Controller</title>
+<style>
+:root { color-scheme: dark; --bg:#171a20; --panel:#242a33; --muted:#aab3c0; --accent:#55d69e; --danger:#ff7777; }
+* { box-sizing:border-box; }
+body { margin:0; padding:18px; background:var(--bg); color:#f5f7fa; font-family:system-ui,Arial,sans-serif; max-width:620px; margin-inline:auto; }
+h1 { font-size:25px; text-align:center; margin:8px 0 4px; letter-spacing:1px; }
+.subtitle { text-align:center; color:var(--muted); font-size:13px; margin:0 0 18px; }
+.panel { background:var(--panel); border-radius:18px; padding:18px; margin:14px 0; }
+.panel h2 { font-size:15px; letter-spacing:1px; margin:0 0 14px; }
+.statusrow { display:flex; align-items:center; justify-content:space-between; gap:12px; }
+#status { color:var(--danger); font-size:13px; }
+button { border:0; border-radius:12px; padding:12px 16px; color:#10151b; background:var(--accent); font-weight:750; font-size:14px; }
+button:disabled { opacity:.45; }
+button.secondary { color:#fff; background:#46505e; }
+button.stop { background:#e96d6d; color:#1a1010; width:100%; margin-top:12px; }
+.sliderline { display:flex; justify-content:space-between; color:var(--muted); font-size:12px; }
+input[type=range] { width:100%; margin:20px 0 12px; accent-color:var(--accent); height:34px; }
+.value { text-align:center; font-size:18px; font-weight:700; color:var(--accent); font-variant-numeric:tabular-nums; }
+#throttleValue.reverse { color:#f3b45c; }
+.note { color:var(--muted); font-size:12px; line-height:1.45; }
+.controls { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+</style>
+</head>
+<body>
+<h1>FORKLIFT CONTROL</h1>
+<p class="subtitle">Bluetooth Low Energy controller</p>
+
+<div class="panel">
+  <div class="statusrow">
+    <div><strong>Bluetooth connection</strong><br><span id="status">Not connected</span></div>
+    <button id="connectButton">CONNECT</button>
+  </div>
+  <p class="note" id="deviceName">Connect to ESP32-C3-Forklift.</p>
+</div>
+
+<div class="panel">
+  <h2>STEERING</h2>
+  <input id="steering" type="range" min="0" max="180" value="90">
+  <div class="sliderline"><span>LEFT</span><span>CENTRE</span><span>RIGHT</span></div>
+  <div class="value" id="steeringValue">90°</div>
+</div>
+
+<div class="panel">
+  <h2>THROTTLE</h2>
+  <input id="throttle" type="range" min="-100" max="100" value="0">
+  <div class="sliderline"><span>REVERSE</span><span>STOP</span><span>FORWARD</span></div>
+  <div class="value" id="throttleValue">0%</div>
+  <button class="stop" id="stopButton">STOP MOTOR</button>
+</div>
+
+<div class="panel">
+  <div class="controls">
+    <button class="secondary" id="centreButton">CENTRE STEERING</button>
+    <button class="secondary" id="disconnectButton" disabled>DISCONNECT</button>
+  </div>
+  <p class="note">Keep this page open while driving. If Bluetooth disconnects or commands stop arriving, the ESP32 stops the drive motor automatically.</p>
+</div>
+
+<script>
+const SERVICE_UUID = "12345678-1234-1234-1234-123456789200";
+const RX_UUID      = "12345678-1234-1234-1234-123456789201";
+const TX_UUID      = "12345678-1234-1234-1234-123456789202";
+
+const statusEl = document.getElementById("status");
+const connectButton = document.getElementById("connectButton");
+const disconnectButton = document.getElementById("disconnectButton");
+const steering = document.getElementById("steering");
+const throttle = document.getElementById("throttle");
+const steeringValue = document.getElementById("steeringValue");
+const throttleValue = document.getElementById("throttleValue");
+
+let device = null, rxCharacteristic = null, txCharacteristic = null;
+let connected = false;
+let writeQueue = Promise.resolve();
+let lastSteeringSent = null, lastThrottleSent = null;
+
+function setStatus(message, good=false) {
+  statusEl.textContent = message;
+  statusEl.style.color = good ? "var(--accent)" : "var(--danger)";
+}
+
+function queueWrite(message) {
+  if (!connected || !rxCharacteristic) return;
+  const bytes = new TextEncoder().encode(message);
+  writeQueue = writeQueue.then(async () => {
+    if (!connected || !rxCharacteristic) return;
+    if (rxCharacteristic.writeValueWithoutResponse) {
+      await rxCharacteristic.writeValueWithoutResponse(bytes);
+    } else {
+      await rxCharacteristic.writeValue(bytes);
+    }
+  }).catch(err => {
+    console.error("BLE write failed:", err);
+    setStatus("Write failed — reconnect if needed");
+  });
+}
+
+function sendSteering(force=false) {
+  const value = Number(steering.value);
+  steeringValue.textContent = value + "°";
+  if (force || value !== lastSteeringSent) {
+    lastSteeringSent = value;
+    queueWrite("S:" + value);
+  }
+}
+
+function sendThrottle(force=false) {
+  const value = Number(throttle.value);
+  throttleValue.textContent = value + "%";
+  throttleValue.classList.toggle("reverse", value < 0);
+  if (force || value !== lastThrottleSent) {
+    lastThrottleSent = value;
+    queueWrite("T:" + value);
+  }
+}
+
+function handleDisconnect() {
+  connected = false;
+  rxCharacteristic = null;
+  txCharacteristic = null;
+  setStatus("Disconnected");
+  connectButton.disabled = false;
+  disconnectButton.disabled = true;
+  throttle.value = 0;
+  sendThrottle(true);
+}
+
+async function connectBLE() {
+  if (!navigator.bluetooth) {
+    setStatus("Web Bluetooth unavailable. Try Chrome on Android.");
+    return;
+  }
+
+  try {
+    connectButton.disabled = true;
+    setStatus("Choose your forklift…");
+
+    device = await navigator.bluetooth.requestDevice({
+      filters: [{ name: "ESP32-C3-Forklift" }],
+      optionalServices: [SERVICE_UUID]
+    });
+
+    device.addEventListener("gattserverdisconnected", handleDisconnect);
+
+    setStatus("Connecting…");
+    const server = await device.gatt.connect();
+    const service = await server.getPrimaryService(SERVICE_UUID);
+    rxCharacteristic = await service.getCharacteristic(RX_UUID);
+    txCharacteristic = await service.getCharacteristic(TX_UUID);
+
+    if (txCharacteristic.properties.notify) {
+      await txCharacteristic.startNotifications();
+      txCharacteristic.addEventListener("characteristicvaluechanged", event => {
+        console.log("ESP32:", new TextDecoder().decode(event.target.value));
+      });
+    }
+
+    connected = true;
+    setStatus("Connected to " + device.name, true);
+    document.getElementById("deviceName").textContent = "Ready to control.";
+    connectButton.disabled = true;
+    disconnectButton.disabled = false;
+
+    throttle.value = 0;
+    steering.value = 90;
+    lastThrottleSent = null;
+    lastSteeringSent = null;
+    sendSteering(true);
+    sendThrottle(true);
+  } catch (err) {
+    console.error(err);
+    setStatus("Connection failed: " + err.message);
+    connectButton.disabled = false;
+    connected = false;
+  }
+}
+
+connectButton.addEventListener("click", connectBLE);
+disconnectButton.addEventListener("click", () => {
+  if (device && device.gatt.connected) device.gatt.disconnect();
+});
+steering.addEventListener("input", () => sendSteering());
+throttle.addEventListener("input", () => sendThrottle());
+
+document.getElementById("stopButton").addEventListener("click", () => {
+  throttle.value = 0;
+  sendThrottle(true);
+  queueWrite("STOP");
+});
+document.getElementById("centreButton").addEventListener("click", () => {
+  steering.value = 90;
+  sendSteering(true);
+});
+
+// Heartbeat keeps the ESP32's 1-second failsafe timer alive.
+setInterval(() => {
+  if (connected) queueWrite("PING");
+}, 250);
+</script>
+</body>
+</html>
