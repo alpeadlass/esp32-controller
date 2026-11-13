@@ -1,0 +1,337 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#171a20">
+<title>Forklift BLE Controller</title>
+<style>
+:root { color-scheme:dark; --bg:#171a20; --panel:#242a33; --muted:#aab3c0; --accent:#55d69e; --danger:#ff7777; --warn:#f3b45c; }
+* { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+html, body { height:100%; margin:0; overflow:hidden; overscroll-behavior:none; background:var(--bg); color:#f5f7fa;
+  font-family:system-ui,Arial,sans-serif; user-select:none; -webkit-user-select:none; touch-action:none; }
+body { display:flex; flex-direction:column; height:100dvh;
+  padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left); }
+
+/* ---------- top bar ---------- */
+header { display:flex; align-items:center; gap:8px; padding:6px 12px; background:var(--panel); flex:none; }
+header h1 { font-size:14px; letter-spacing:1.5px; margin:0 6px 0 0; }
+.dot { width:10px; height:10px; border-radius:50%; background:var(--danger); flex:none; }
+.dot.on { background:var(--accent); }
+#status { font-size:12px; color:var(--muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.spacer { flex:1; }
+button { border:0; border-radius:10px; padding:9px 14px; color:#10151b; background:var(--accent); font-weight:750; font-size:13px; touch-action:manipulation; }
+button:disabled { opacity:.45; }
+button.secondary { color:#fff; background:#46505e; }
+button.stop { background:#e96d6d; color:#1a1010; font-size:18px; padding:16px 26px; }
+
+/* ---------- main layout ---------- */
+main { flex:1; min-height:0; display:flex; align-items:center; justify-content:space-between; padding:8px 22px; gap:12px; }
+.zone { display:flex; flex-direction:column; align-items:center; gap:6px; }
+.zone .label { font-size:11px; letter-spacing:1.5px; color:var(--muted); }
+
+.track { position:relative; background:var(--panel); border-radius:44px; touch-action:none; }
+.track::before { content:""; position:absolute; background:#3a4350; }
+.vtrack { width:84px; height:min(60dvh, 250px); }
+.vtrack::before { left:14px; right:14px; top:50%; height:2px; }
+.htrack { height:84px; width:min(38vw, 330px); }
+.htrack::before { top:14px; bottom:14px; left:50%; width:2px; }
+.track .tag { position:absolute; font-size:10px; letter-spacing:1px; color:#6f7a89; pointer-events:none; }
+.vtrack .tag { left:0; right:0; text-align:center; }
+.vtrack .tag.a { top:10px; } .vtrack .tag.b { bottom:10px; }
+.htrack .tag { top:50%; transform:translateY(-50%); }
+.htrack .tag.a { left:14px; } .htrack .tag.b { right:14px; }
+
+.knob { position:absolute; width:64px; height:64px; border-radius:50%; background:var(--accent);
+  box-shadow:0 3px 10px rgba(0,0,0,.45); pointer-events:none; }
+.vtrack .knob { left:10px; top:0; }
+.htrack .knob { top:10px; left:0; }
+.track.reverse .knob { background:var(--warn); }
+
+/* ---------- centre column ---------- */
+.center { display:flex; flex-direction:column; align-items:center; gap:10px; }
+.readouts { display:flex; gap:22px; }
+.readouts div { text-align:center; }
+.readouts small { display:block; font-size:10px; letter-spacing:1.5px; color:var(--muted); }
+.readouts b { font-size:22px; color:var(--accent); font-variant-numeric:tabular-nums; }
+#tVal.reverse { color:var(--warn); }
+.toggle { font-size:12px; color:var(--muted); display:flex; align-items:center; gap:6px; }
+.toggle input { width:18px; height:18px; accent-color:var(--accent); }
+
+/* ---------- portrait warning ---------- */
+#rotate { display:none; position:fixed; inset:0; z-index:10; background:var(--bg); align-items:center; justify-content:center;
+  flex-direction:column; gap:10px; text-align:center; padding:30px; font-size:18px; }
+#rotate small { color:var(--muted); font-size:13px; }
+@media (orientation:portrait) { #rotate { display:flex; } }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>FORKLIFT</h1>
+  <span class="dot" id="dot"></span>
+  <span id="status">Not connected</span>
+  <span class="spacer"></span>
+  <button id="connectButton">CONNECT</button>
+  <button id="disconnectButton" class="secondary" disabled>DISCONNECT</button>
+  <button id="fsButton" class="secondary">FULLSCREEN</button>
+</header>
+
+<main>
+  <section class="zone">
+    <div class="label">THROTTLE</div>
+    <div class="track vtrack" id="throttleTrack">
+      <span class="tag a">FWD</span><span class="tag b">REV</span>
+      <div class="knob" id="throttleKnob"></div>
+    </div>
+  </section>
+
+  <section class="center">
+    <div class="readouts">
+      <div><small>THROTTLE</small><b id="tVal">0%</b></div>
+      <div><small>STEER</small><b id="sVal">90°</b></div>
+    </div>
+    <button class="stop" id="stopButton">STOP</button>
+    <button class="secondary" id="centreButton">CENTRE STEERING</button>
+    <label class="toggle"><input type="checkbox" id="holdThrottle"> Hold throttle on release</label>
+  </section>
+
+  <section class="zone">
+    <div class="label">STEERING</div>
+    <div class="track htrack" id="steerTrack">
+      <span class="tag a">LEFT</span><span class="tag b">RIGHT</span>
+      <div class="knob" id="steerKnob"></div>
+    </div>
+  </section>
+</main>
+
+<div id="rotate">
+  <div style="font-size:42px">⟳</div>
+  Rotate your phone to landscape
+  <small>Or tap FULLSCREEN once in landscape to lock it.</small>
+</div>
+
+<script>
+const SERVICE_UUID = "12345678-1234-1234-1234-123456789200";
+const RX_UUID      = "12345678-1234-1234-1234-123456789201";
+const TX_UUID      = "12345678-1234-1234-1234-123456789202";
+
+// Set to true if steering turns the wrong way.
+const INVERT_STEERING = false;
+// Stick values closer to centre than this snap to exactly 0 / 90.
+const DEADZONE = 0.05;
+
+const $ = id => document.getElementById(id);
+const statusEl = $("status"), dot = $("dot");
+const connectButton = $("connectButton"), disconnectButton = $("disconnectButton");
+const tVal = $("tVal"), sVal = $("sVal");
+const throttleTrack = $("throttleTrack"), steerTrack = $("steerTrack");
+
+let device = null, rxCharacteristic = null, txCharacteristic = null;
+let connected = false;
+let writeQueue = Promise.resolve();
+let pending = 0;
+
+let tTarget = 0, sTarget = 90;     // what the sticks currently ask for
+let tSent = null, sSent = null;    // what we last queued to the ESP32
+
+function setStatus(message, good = false) {
+  statusEl.textContent = message;
+  dot.classList.toggle("on", good);
+}
+
+/* ---------- BLE writes ---------- */
+function queueWrite(message, force = false) {
+  if (!connected || !rxCharacteristic) return false;
+  if (pending > 6 && !force) return false;       // don't let a backlog build up
+  const bytes = new TextEncoder().encode(message);
+  pending++;
+  writeQueue = writeQueue.then(async () => {
+    if (!connected || !rxCharacteristic) return;
+    if (rxCharacteristic.writeValueWithoutResponse) {
+      await rxCharacteristic.writeValueWithoutResponse(bytes);
+    } else {
+      await rxCharacteristic.writeValue(bytes);
+    }
+  }).catch(err => {
+    console.error("BLE write failed:", err);
+    setStatus("Write failed - reconnect if needed");
+  }).finally(() => { pending--; });
+  return true;
+}
+
+// Send changed values at most ~25 times a second.
+setInterval(() => {
+  if (!connected) return;
+  if (tTarget !== tSent && queueWrite("T:" + tTarget)) tSent = tTarget;
+  if (sTarget !== sSent && queueWrite("S:" + sTarget)) sSent = sTarget;
+}, 40);
+
+// Heartbeat: re-send both values so the ESP32's 1 s failsafe stays happy
+// and any dropped packet gets corrected.
+setInterval(() => {
+  if (!connected) return;
+  tSent = null; sSent = null;
+  queueWrite("PING");
+}, 300);
+
+/* ---------- touch sticks ---------- */
+function makeAxis(track, knob, vertical, onValue, springBack) {
+  let activeId = null;
+  let value = 0;
+
+  const knobSize = () => knob.offsetWidth;
+
+  function place(v) {
+    const rect = track.getBoundingClientRect();
+    const size = vertical ? rect.height : rect.width;
+    const usable = Math.max(0, size - knobSize());
+    const pos = vertical ? (1 - v) / 2 : (v + 1) / 2;
+    knob.style[vertical ? "top" : "left"] = (pos * usable) + "px";
+  }
+
+  function apply(v) {
+    if (Math.abs(v) < DEADZONE) v = 0;
+    value = v;
+    place(v);
+    onValue(v);
+  }
+
+  function fromEvent(e) {
+    const rect = track.getBoundingClientRect();
+    const size = vertical ? rect.height : rect.width;
+    const usable = Math.max(1, size - knobSize());
+    const p = vertical ? e.clientY - rect.top : e.clientX - rect.left;
+    const pos = Math.min(1, Math.max(0, (p - knobSize() / 2) / usable));
+    return vertical ? 1 - 2 * pos : 2 * pos - 1;
+  }
+
+  track.addEventListener("pointerdown", e => {
+    if (activeId !== null) return;
+    activeId = e.pointerId;
+    track.setPointerCapture(activeId);
+    apply(fromEvent(e));
+    e.preventDefault();
+  });
+  track.addEventListener("pointermove", e => {
+    if (e.pointerId === activeId) apply(fromEvent(e));
+  });
+  const release = e => {
+    if (e.pointerId !== activeId) return;
+    activeId = null;
+    if (springBack()) apply(0);
+  };
+  track.addEventListener("pointerup", release);
+  track.addEventListener("pointercancel", release);
+
+  window.addEventListener("resize", () => place(value));
+  window.addEventListener("orientationchange", () => setTimeout(() => place(value), 200));
+
+  return { set: apply, refresh: () => place(value) };
+}
+
+const throttleAxis = makeAxis(throttleTrack, $("throttleKnob"), true, v => {
+  tTarget = Math.round(v * 100);
+  tVal.textContent = tTarget + "%";
+  tVal.classList.toggle("reverse", tTarget < 0);
+  throttleTrack.classList.toggle("reverse", tTarget < 0);
+}, () => !$("holdThrottle").checked);
+
+const steerAxis = makeAxis(steerTrack, $("steerKnob"), false, v => {
+  const s = INVERT_STEERING ? -v : v;
+  sTarget = Math.round(90 + s * 90);
+  sVal.textContent = sTarget + "°";
+}, () => true);
+
+requestAnimationFrame(() => { throttleAxis.set(0); steerAxis.set(0); });
+
+/* ---------- buttons ---------- */
+$("stopButton").addEventListener("click", () => {
+  throttleAxis.set(0);
+  tSent = 0;
+  queueWrite("STOP", true);
+});
+$("centreButton").addEventListener("click", () => steerAxis.set(0));
+
+$("fsButton").addEventListener("click", async () => {
+  try {
+    await document.documentElement.requestFullscreen();
+    if (screen.orientation && screen.orientation.lock) {
+      await screen.orientation.lock("landscape");
+    }
+  } catch (err) {
+    console.warn("Fullscreen / orientation lock unavailable:", err);
+  }
+  setTimeout(() => { throttleAxis.refresh(); steerAxis.refresh(); }, 300);
+});
+
+// Safety: if the page is hidden, stop the motor.
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) {
+    throttleAxis.set(0);
+    queueWrite("STOP", true);
+  }
+});
+
+/* ---------- connection ---------- */
+function handleDisconnect() {
+  connected = false;
+  rxCharacteristic = null;
+  txCharacteristic = null;
+  setStatus("Disconnected");
+  connectButton.disabled = false;
+  disconnectButton.disabled = true;
+  throttleAxis.set(0);
+  steerAxis.set(0);
+}
+
+async function connectBLE() {
+  if (!navigator.bluetooth) {
+    setStatus("Web Bluetooth unavailable - try Chrome on Android");
+    return;
+  }
+  try {
+    connectButton.disabled = true;
+    setStatus("Choose your forklift...");
+
+    device = await navigator.bluetooth.requestDevice({
+      filters: [{ name: "ESP32-C3-Forklift" }],
+      optionalServices: [SERVICE_UUID]
+    });
+    device.addEventListener("gattserverdisconnected", handleDisconnect);
+
+    setStatus("Connecting...");
+    const server = await device.gatt.connect();
+    const service = await server.getPrimaryService(SERVICE_UUID);
+    rxCharacteristic = await service.getCharacteristic(RX_UUID);
+    txCharacteristic = await service.getCharacteristic(TX_UUID);
+
+    if (txCharacteristic.properties.notify) {
+      await txCharacteristic.startNotifications();
+      txCharacteristic.addEventListener("characteristicvaluechanged", event => {
+        console.log("ESP32:", new TextDecoder().decode(event.target.value));
+      });
+    }
+
+    connected = true;
+    setStatus("Connected to " + device.name, true);
+    disconnectButton.disabled = false;
+
+    throttleAxis.set(0);
+    steerAxis.set(0);
+    tSent = null; sSent = null;
+  } catch (err) {
+    console.error(err);
+    setStatus("Connection failed: " + err.message);
+    connectButton.disabled = false;
+    connected = false;
+  }
+}
+
+connectButton.addEventListener("click", connectBLE);
+disconnectButton.addEventListener("click", () => {
+  if (device && device.gatt.connected) device.gatt.disconnect();
+});
+</script>
+</body>
+</html>
