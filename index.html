@@ -141,10 +141,10 @@ async function connectBLE() {
     connectButton.disabled = true;
     setStatus("Choose your forklift…");
 
-    device = await navigator.bluetooth.requestDevice({
-      filters: [{ name: "ESP32-C3-Forklift" }],
-      optionalServices: [SERVICE_UUID]
-    });
+device = await navigator.bluetooth.requestDevice({
+  acceptAllDevices: true,
+  optionalServices: [SERVICE_UUID]
+});
 
     device.addEventListener("gattserverdisconnected", handleDisconnect);
 
