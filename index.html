@@ -9,7 +9,7 @@
 :root { color-scheme:dark; --bg:#171a20; --panel:#242a33; --muted:#aab3c0; --accent:#55d69e; --danger:#ff7777; --warn:#f3b45c; }
 * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
 html, body { height:100%; margin:0; overflow:hidden; overscroll-behavior:none; background:var(--bg); color:#f5f7fa;
-  font-family:system-ui,Arial,sans-serif; user-select:none; -webkit-user-select:none; touch-action:none; }
+  font-family:system-ui,Arial,sans-serif; user-select:none; -webkit-user-select:none; touch-action:manipulation; }
 body { display:flex; flex-direction:column; height:100dvh;
   padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left); }
 
@@ -19,19 +19,23 @@ header h1 { font-size:14px; letter-spacing:1.5px; margin:0 6px 0 0; }
 .dot { width:10px; height:10px; border-radius:50%; background:var(--danger); flex:none; }
 .dot.on { background:var(--accent); }
 #status { font-size:12px; color:var(--muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.pill { font-size:11px; letter-spacing:1px; padding:3px 9px; border-radius:999px; background:#2f3743; color:var(--muted); flex:none; }
+.pill.ok { background:#1f4d3a; color:var(--accent); }
+.pill.locked { background:#5a4420; color:var(--warn); }
 .spacer { flex:1; }
 button { border:0; border-radius:10px; padding:9px 14px; color:#10151b; background:var(--accent); font-weight:750; font-size:13px; touch-action:manipulation; }
 button:disabled { opacity:.45; }
 button.secondary { color:#fff; background:#46505e; }
-button.stop { background:#e96d6d; color:#1a1010; font-size:18px; padding:16px 26px; }
+button.stop { background:#e96d6d; color:#1a1010; font-size:18px; padding:14px 26px; }
 
 /* ---------- main layout ---------- */
 main { flex:1; min-height:0; display:flex; align-items:center; justify-content:space-between; padding:8px 22px; gap:12px; }
-.zone { display:flex; flex-direction:column; align-items:center; gap:6px; }
+.zone { display:flex; flex-direction:column; align-items:center; gap:6px; flex:none; }
 .zone .label { font-size:11px; letter-spacing:1.5px; color:var(--muted); }
 
-.track { position:relative; background:var(--panel); border-radius:44px; touch-action:none; }
+.track { position:relative; background:var(--panel); border-radius:44px; touch-action:none; transition:opacity .2s; }
 .track::before { content:""; position:absolute; background:#3a4350; }
+.track.locked { opacity:.45; }
 .vtrack { width:84px; height:min(60dvh, 250px); }
 .vtrack::before { left:14px; right:14px; top:50%; height:2px; }
 .htrack { height:84px; width:min(38vw, 330px); }
@@ -49,14 +53,22 @@ main { flex:1; min-height:0; display:flex; align-items:center; justify-content:s
 .track.reverse .knob { background:var(--warn); }
 
 /* ---------- centre column ---------- */
-.center { display:flex; flex-direction:column; align-items:center; gap:10px; }
+.center { flex:1; min-width:0; max-width:360px; display:flex; flex-direction:column; align-items:center; gap:10px; }
 .readouts { display:flex; gap:22px; }
 .readouts div { text-align:center; }
 .readouts small { display:block; font-size:10px; letter-spacing:1.5px; color:var(--muted); }
 .readouts b { font-size:22px; color:var(--accent); font-variant-numeric:tabular-nums; }
 #tVal.reverse { color:var(--warn); }
+.view { width:100%; display:flex; flex-direction:column; align-items:center; gap:8px; }
+.view[hidden] { display:none; }
 .toggle { font-size:12px; color:var(--muted); display:flex; align-items:center; gap:6px; }
 .toggle input { width:18px; height:18px; accent-color:var(--accent); }
+
+.grid { display:grid; grid-template-columns:1fr 1fr; gap:6px 16px; width:100%; }
+.setting label { display:flex; justify-content:space-between; font-size:11px; color:var(--muted); }
+.setting b { color:var(--accent); font-variant-numeric:tabular-nums; }
+.setting input { width:100%; height:30px; margin:0; accent-color:var(--accent); }
+.row { display:flex; gap:8px; }
 
 /* ---------- portrait warning ---------- */
 #rotate { display:none; position:fixed; inset:0; z-index:10; background:var(--bg); align-items:center; justify-content:center;
@@ -71,6 +83,7 @@ main { flex:1; min-height:0; display:flex; align-items:center; justify-content:s
   <h1>FORKLIFT</h1>
   <span class="dot" id="dot"></span>
   <span id="status">Not connected</span>
+  <span class="pill" id="armPill">-</span>
   <span class="spacer"></span>
   <button id="connectButton">CONNECT</button>
   <button id="disconnectButton" class="secondary" disabled>DISCONNECT</button>
@@ -91,9 +104,30 @@ main { flex:1; min-height:0; display:flex; align-items:center; justify-content:s
       <div><small>THROTTLE</small><b id="tVal">0%</b></div>
       <div><small>STEER</small><b id="sVal">90°</b></div>
     </div>
-    <button class="stop" id="stopButton">STOP</button>
-    <button class="secondary" id="centreButton">CENTRE STEERING</button>
-    <label class="toggle"><input type="checkbox" id="holdThrottle"> Hold throttle on release</label>
+
+    <div class="view" id="controlsView">
+      <button class="stop" id="stopButton">STOP</button>
+      <button class="secondary" id="centreButton">CENTRE STEERING</button>
+      <label class="toggle"><input type="checkbox" id="holdThrottle"> Hold throttle on release</label>
+      <button class="secondary" id="settingsButton">SETTINGS</button>
+    </div>
+
+    <div class="view" id="settingsView" hidden>
+      <div class="grid">
+        <div class="setting"><label>Steering trim <b id="trimVal"></b></label>
+          <input type="range" id="trim" min="-30" max="30" step="1"></div>
+        <div class="setting"><label>Max throttle <b id="maxThrVal"></b></label>
+          <input type="range" id="maxThr" min="10" max="100" step="5"></div>
+        <div class="setting"><label>Left limit <b id="leftVal"></b></label>
+          <input type="range" id="left" min="5" max="70" step="1"></div>
+        <div class="setting"><label>Right limit <b id="rightVal"></b></label>
+          <input type="range" id="right" min="5" max="70" step="1"></div>
+      </div>
+      <div class="row">
+        <button class="secondary" id="resetButton">RESET</button>
+        <button id="doneButton">DONE</button>
+      </div>
+    </div>
   </section>
 
   <section class="zone">
@@ -118,11 +152,11 @@ const TX_UUID      = "12345678-1234-1234-1234-123456789202";
 
 // Set to true if steering turns the wrong way.
 const INVERT_STEERING = false;
-// Stick values closer to centre than this snap to exactly 0 / 90.
+// Stick values closer to centre than this snap to exactly 0 / centre.
 const DEADZONE = 0.05;
 
 const $ = id => document.getElementById(id);
-const statusEl = $("status"), dot = $("dot");
+const statusEl = $("status"), dot = $("dot"), armPill = $("armPill");
 const connectButton = $("connectButton"), disconnectButton = $("disconnectButton");
 const tVal = $("tVal"), sVal = $("sVal");
 const throttleTrack = $("throttleTrack"), steerTrack = $("steerTrack");
@@ -131,19 +165,40 @@ let device = null, rxCharacteristic = null, txCharacteristic = null;
 let connected = false;
 let writeQueue = Promise.resolve();
 let pending = 0;
+let wakeLock = null;
 
 let tTarget = 0, sTarget = 90;     // what the sticks currently ask for
 let tSent = null, sSent = null;    // what we last queued to the ESP32
 
+/* ---------- saved settings ---------- */
+const STORE_KEY = "forkliftSettings";
+const DEFAULTS = { trim: 0, left: 40, right: 40, maxThr: 50 };
+let settings = { ...DEFAULTS };
+try {
+  const saved = JSON.parse(localStorage.getItem(STORE_KEY) || "null");
+  if (saved) settings = { ...DEFAULTS, ...saved };
+} catch (e) { /* storage unavailable */ }
+
+function saveSettings() {
+  try { localStorage.setItem(STORE_KEY, JSON.stringify(settings)); } catch (e) {}
+}
+
+/* ---------- status ---------- */
 function setStatus(message, good = false) {
   statusEl.textContent = message;
   dot.classList.toggle("on", good);
 }
 
+function setArmed(isArmed) {
+  armPill.textContent = !connected ? "-" : (isArmed ? "ARMED" : "LOCKED");
+  armPill.className = "pill" + (!connected ? "" : (isArmed ? " ok" : " locked"));
+  throttleTrack.classList.toggle("locked", connected && !isArmed);
+}
+
 /* ---------- BLE writes ---------- */
 function queueWrite(message, force = false) {
   if (!connected || !rxCharacteristic) return false;
-  if (pending > 6 && !force) return false;       // don't let a backlog build up
+  if (pending > 6 && !force) return false;
   const bytes = new TextEncoder().encode(message);
   pending++;
   writeQueue = writeQueue.then(async () => {
@@ -167,8 +222,7 @@ setInterval(() => {
   if (sTarget !== sSent && queueWrite("S:" + sTarget)) sSent = sTarget;
 }, 40);
 
-// Heartbeat: re-send both values so the ESP32's 1 s failsafe stays happy
-// and any dropped packet gets corrected.
+// Heartbeat: re-send both values so the failsafe stays happy and dropped packets self-correct.
 setInterval(() => {
   if (!connected) return;
   tSent = null; sSent = null;
@@ -227,23 +281,74 @@ function makeAxis(track, knob, vertical, onValue, springBack) {
   window.addEventListener("resize", () => place(value));
   window.addEventListener("orientationchange", () => setTimeout(() => place(value), 200));
 
-  return { set: apply, refresh: () => place(value) };
+  return { set: apply, get: () => value, refresh: () => place(value) };
+}
+
+// Stick (-1..1) -> servo angle, using trim and per-side limits.
+function steerAngle(v) {
+  const travel = v < 0 ? v * settings.left : v * settings.right;   // degrees from centre
+  const offset = INVERT_STEERING ? -travel : travel;
+  return Math.round(Math.min(180, Math.max(0, 90 + settings.trim + offset)));
 }
 
 const throttleAxis = makeAxis(throttleTrack, $("throttleKnob"), true, v => {
-  tTarget = Math.round(v * 100);
+  tTarget = Math.round(v * settings.maxThr);
   tVal.textContent = tTarget + "%";
   tVal.classList.toggle("reverse", tTarget < 0);
   throttleTrack.classList.toggle("reverse", tTarget < 0);
 }, () => !$("holdThrottle").checked);
 
 const steerAxis = makeAxis(steerTrack, $("steerKnob"), false, v => {
-  const s = INVERT_STEERING ? -v : v;
-  sTarget = Math.round(90 + s * 90);
+  sTarget = steerAngle(v);
   sVal.textContent = sTarget + "°";
 }, () => true);
 
 requestAnimationFrame(() => { throttleAxis.set(0); steerAxis.set(0); });
+
+/* ---------- settings panel ---------- */
+const settingDefs = {
+  trim:   { el: $("trim"),   out: $("trimVal"),   fmt: v => (v > 0 ? "+" : "") + v + "°" },
+  maxThr: { el: $("maxThr"), out: $("maxThrVal"), fmt: v => v + "%" },
+  left:   { el: $("left"),   out: $("leftVal"),   fmt: v => v + "°" },
+  right:  { el: $("right"),  out: $("rightVal"),  fmt: v => v + "°" }
+};
+
+function refreshSettingsUI() {
+  for (const k in settingDefs) {
+    const d = settingDefs[k];
+    d.el.value = settings[k];
+    d.out.textContent = d.fmt(settings[k]);
+  }
+}
+
+function reapplySticks() {
+  throttleAxis.set(throttleAxis.get());
+  steerAxis.set(steerAxis.get());
+}
+
+for (const k in settingDefs) {
+  const d = settingDefs[k];
+  d.el.addEventListener("input", () => {
+    settings[k] = Number(d.el.value);
+    d.out.textContent = d.fmt(settings[k]);
+    saveSettings();
+    reapplySticks();   // trim / limits take effect on the servo immediately
+  });
+}
+refreshSettingsUI();
+
+function showSettings(show) {
+  $("controlsView").hidden = show;
+  $("settingsView").hidden = !show;
+}
+$("settingsButton").addEventListener("click", () => showSettings(true));
+$("doneButton").addEventListener("click", () => showSettings(false));
+$("resetButton").addEventListener("click", () => {
+  settings = { ...DEFAULTS };
+  saveSettings();
+  refreshSettingsUI();
+  reapplySticks();
+});
 
 /* ---------- buttons ---------- */
 $("stopButton").addEventListener("click", () => {
@@ -265,11 +370,22 @@ $("fsButton").addEventListener("click", async () => {
   setTimeout(() => { throttleAxis.refresh(); steerAxis.refresh(); }, 300);
 });
 
+/* ---------- keep screen on ---------- */
+async function keepAwake() {
+  try {
+    if ("wakeLock" in navigator) wakeLock = await navigator.wakeLock.request("screen");
+  } catch (err) {
+    console.warn("Wake lock unavailable:", err);
+  }
+}
+
 // Safety: if the page is hidden, stop the motor.
 document.addEventListener("visibilitychange", () => {
   if (document.hidden) {
     throttleAxis.set(0);
     queueWrite("STOP", true);
+  } else if (connected) {
+    keepAwake();
   }
 });
 
@@ -279,6 +395,7 @@ function handleDisconnect() {
   rxCharacteristic = null;
   txCharacteristic = null;
   setStatus("Disconnected");
+  setArmed(false);
   connectButton.disabled = false;
   disconnectButton.disabled = true;
   throttleAxis.set(0);
@@ -294,13 +411,11 @@ async function connectBLE() {
     connectButton.disabled = true;
     setStatus("Choose your forklift...");
 
-device = await navigator.bluetooth.requestDevice({
-  acceptAllDevices: true,
-  optionalServices: [SERVICE_UUID]
-});
+    device = await navigator.bluetooth.requestDevice({
+      acceptAllDevices: true,
+      optionalServices: [SERVICE_UUID]
+    });
     device.addEventListener("gattserverdisconnected", handleDisconnect);
-
-    
 
     setStatus("Connecting...");
     const server = await device.gatt.connect();
@@ -311,13 +426,17 @@ device = await navigator.bluetooth.requestDevice({
     if (txCharacteristic.properties.notify) {
       await txCharacteristic.startNotifications();
       txCharacteristic.addEventListener("characteristicvaluechanged", event => {
-        console.log("ESP32:", new TextDecoder().decode(event.target.value));
+        const text = new TextDecoder().decode(event.target.value).trim();
+        if (text === "ARMED") setArmed(true);
+        else if (text === "LOCKED") setArmed(false);
       });
     }
 
     connected = true;
-    setStatus("Connected to " + device.name, true);
+    setStatus("Connected to " + (device.name || "forklift"), true);
+    setArmed(false);
     disconnectButton.disabled = false;
+    keepAwake();
 
     throttleAxis.set(0);
     steerAxis.set(0);
